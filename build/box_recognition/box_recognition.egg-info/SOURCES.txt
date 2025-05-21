@@ -1,0 +1,15 @@
+LICENSE
+package.xml
+setup.cfg
+setup.py
+../../build/box_recognition/box_recognition.egg-info/PKG-INFO
+../../build/box_recognition/box_recognition.egg-info/SOURCES.txt
+../../build/box_recognition/box_recognition.egg-info/dependency_links.txt
+../../build/box_recognition/box_recognition.egg-info/requires.txt
+../../build/box_recognition/box_recognition.egg-info/top_level.txt
+../../build/box_recognition/box_recognition.egg-info/zip-safe
+box_recognition/__init__.py
+resource/box_recognition
+test/test_copyright.py
+test/test_flake8.py
+test/test_pep257.py

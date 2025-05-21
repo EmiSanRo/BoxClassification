@@ -1,0 +1,29 @@
+/home/emy/.local/lib/python3.10/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+running egg_info
+creating ../../build/box_recognition/box_recognition.egg-info
+writing ../../build/box_recognition/box_recognition.egg-info/PKG-INFO
+writing dependency_links to ../../build/box_recognition/box_recognition.egg-info/dependency_links.txt
+writing requirements to ../../build/box_recognition/box_recognition.egg-info/requires.txt
+writing top-level names to ../../build/box_recognition/box_recognition.egg-info/top_level.txt
+writing manifest file '../../build/box_recognition/box_recognition.egg-info/SOURCES.txt'
+reading manifest file '../../build/box_recognition/box_recognition.egg-info/SOURCES.txt'
+adding license file 'LICENSE'
+writing manifest file '../../build/box_recognition/box_recognition.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/emy/conveyorbelt_ws/build/box_recognition/build/lib/box_recognition
+copying box_recognition/__init__.py -> /home/emy/conveyorbelt_ws/build/box_recognition/build/lib/box_recognition
+running install
+running install_lib
+creating /home/emy/conveyorbelt_ws/install/box_recognition/lib/python3.10/site-packages/box_recognition
+copying /home/emy/conveyorbelt_ws/build/box_recognition/build/lib/box_recognition/__init__.py -> /home/emy/conveyorbelt_ws/install/box_recognition/lib/python3.10/site-packages/box_recognition
+byte-compiling /home/emy/conveyorbelt_ws/install/box_recognition/lib/python3.10/site-packages/box_recognition/__init__.py to __init__.cpython-310.pyc
+running install_data
+creating /home/emy/conveyorbelt_ws/install/box_recognition/share/ament_index/resource_index/packages
+copying resource/box_recognition -> /home/emy/conveyorbelt_ws/install/box_recognition/share/ament_index/resource_index/packages
+copying package.xml -> /home/emy/conveyorbelt_ws/install/box_recognition/share/box_recognition
+running install_egg_info
+Copying ../../build/box_recognition/box_recognition.egg-info to /home/emy/conveyorbelt_ws/install/box_recognition/lib/python3.10/site-packages/box_recognition-0.0.0-py3.10.egg-info
+running install_scripts
+writing list of installed files to '/home/emy/conveyorbelt_ws/build/box_recognition/install.log'
