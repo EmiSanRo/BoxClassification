@@ -21,9 +21,10 @@ class DashboardNode(Node):
     def __init__(self):
         super().__init__('dashboard_node')
 
-        self.bridge = CvBridge()
-        self.latest_frame = None
+        self.bridge = CvBridge() #COnversion cv2.msg imagen y viseversa
+        self.latest_frame = None #Iniicializamos el ultimo frame que ha llegado
 
+        #Suscrpción al nodo de la imagén camara 1
         self.subscription = self.create_subscription(
             Image,
             '/image',
@@ -43,6 +44,7 @@ class DashboardNode(Node):
             self.get_logger().error(f"Error al convertir la imagen: {e}")
 
 
+#Dashboard
 class DashboardGUI(QWidget):
     def __init__(self, node: DashboardNode):
         super().__init__()
