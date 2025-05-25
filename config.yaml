@@ -1,0 +1,18 @@
+
+path: D:\RETO
+train: train
+val: valid
+
+names:
+  0: A1_hoyo_caja
+  1: A2_abierta_caja
+  2: A_caja  
+  3: B1_hoyo_caja
+  4: B2_abierta_caja
+  5: B_caja
+  6: C1_hoyo_caja
+  7: C2_abierta_caja
+  8: C_caja
+
+
+ 
