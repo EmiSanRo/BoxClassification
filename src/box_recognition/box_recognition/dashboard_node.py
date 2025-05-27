@@ -123,7 +123,8 @@ class DashboardGUI(QWidget):
             bytes_per_line = ch * w
             qt_image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888) #Convert the image to a QImage
             pix = QPixmap.fromImage(qt_image) #Convert the QImage to a QPixMap
-
+            
+            #Scale to fit video labels
             scaled_pix_1 = pix.scaled(self.video_label_1.width(), self.video_label_1.height(), Qt.KeepAspectRatio)
             scaled_pix_2 = pix.scaled(self.video_label_2.width(), self.video_label_2.height(), Qt.KeepAspectRatio)
 
