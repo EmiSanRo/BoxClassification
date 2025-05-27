@@ -22,7 +22,7 @@ class CameraProcessingNode(Node):
     def cameras_callback(self, msg):
         cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         croped_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
-        croped_image = croped_image[100:400, 100:400]  # Crop the image
+        croped_image = croped_image[0:1080, 640:1280]  # Crop the image coordinates (y1:y2, x1:x2)(1080 x 1920)
         self.camera1_publisher.publish(self.bridge.cv2_to_imgmsg(croped_image, encoding='rgb8'))
         
         
