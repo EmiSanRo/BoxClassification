@@ -20,7 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'dashboard_node = box_recognition.dashboard_node:main'
+            'dashboard_node = box_recognition.dashboard_node:main',
+            'camera_processing = box_recognition.camera_processing:main',
         ],
     },
 )

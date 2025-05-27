@@ -58,6 +58,7 @@ build/
 # Ignore generated docs
 *.dox
 *.wikidoc
+*.qodo
 
 # eclipse stuff
 .project
