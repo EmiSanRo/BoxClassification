@@ -14,24 +14,25 @@ class My_Subscriber(Node):
     def __init__(self):
         super().__init__('lab9_adaptado')
 
-        # Publicador para la etiqueta detectada
+        # Publisher para la etiqueta detectada (Int16)
         self.publisher_detected = self.create_publisher(Int16, 'detected_object_id', 10)
         self.msg2 = Int16()
 
-        # Suscripción al tópico 'esquinas' (llega mensaje sensor_msgs/Image)
+        # Publisher para la imagen procesada (sensor_msgs/Image)
+        self.publisher_img = self.create_publisher(Image, 'processed_image', 10)
+        self.msg_img = Image()
+
+        # Suscripción al tópico 'esquinas' (sensor_msgs/Image entrante)
         self.bridge = CvBridge()
         self.img = np.zeros((480, 640, 3), dtype=np.uint8)  # placeholder inicial
-        self.create_subscription(
-            Image,
-            'esquinas',
-            self.Image_hz,
-            10
+        self.create_subscription(Image, 'esquinas', self.Image_hz, 10
         )
 
-        # Parámetros para la lógica de “glaxo”:
-        self.model = YOLO('src/basic_comms/basic_comms/best.pt')  # Mismo best.pt
-        self.END_DELAY_FRAMES = 40  # frames sin detección para “cerrar caja”
-        self.FRAME_PERIOD = 1.0 / 60.0  # no se usa explícito, pero lo dejamos como referencia
+        # Cargamos el modelo YOLO (misma ruta a best.pt)
+        self.model = YOLO('src/basic_comms/basic_comms/best.pt')
+
+        # Parámetros de la lógica “GlaxoPruebas”
+        self.END_DELAY_FRAMES = 40      # Frames sin detección tras empezar colección para “cerrar caja”
         self.collecting = False
         self.no_detection_count = 0
         self.box_detections = []
@@ -41,81 +42,82 @@ class My_Subscriber(Node):
         self.create_timer(self.timer_period, self.timer_callback)
 
     def Image_hz(self, msg: Image):
-        # Recibimos imagen desde ROS, la convertimos a CV BGR
-        self.img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+        # Convertimos mensaje ROS Image a OpenCV BGR
+        self.img = self.bridge.imgmsg_to_cv2(msg, "rgb8")
 
     def timer_callback(self):
-        # 1) Resize a 640×480
+        # 1) Redimensionar la imagen a 640×480
         frame = cv2.resize(self.img, (640, 480))
 
-        # 2) Recorte central: ancho 320, alto 200 (misma lógica de GlaxoPruebas)
-        h, w = frame.shape[:2]           # h=480, w=640
+        # 2) Recorte central (320×200): 
+        #    ancho recortado = 320, alto recortado = 200, centrado horizontal
+        h, w = frame.shape[:2]           # 480, 640
         new_w, new_h = 320, 80
-        x0 = (w - new_w) // 2            # (640-320)//2 = 160
-        # y0 = new_h (80), pero recortamos de 0:200
-        cropped = frame[0:200, x0:x0 + new_w]
+        x0 = (w - new_w) // 2            # 160
+        cropped = frame[0:200, x0:x0 + new_w]  # [y0=0 : y1=200, x0=160 : x0+320=480]
 
-        # 3) Convertimos BGR→RGB para YOLO
+        # 3) Convertimos a RGB para YOLO
         rgb_cropped = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
 
         # 4) Ejecutamos YOLO sobre el recorte
         results = self.model(source=rgb_cropped, conf=0.3, imgsz=512, verbose=False)[0]
 
-        # 5) Filtrar detecciones que toquen top/bottom
-        #    frame_height para bottom: 180 (igual al código Glaxo)
+        # 5) Filtrar detecciones que toquen top (y1==0) o bottom (y2>=180)
         filtered_ids = []
         for coords, cls in zip(results.boxes.xyxy, results.boxes.cls):
             x1, y1, x2, y2 = coords.cpu().numpy().astype(int)
-            # Si y1==0 (top) o y2>=180 (bottom), ignorar
+            # Condición de descartar si y1==0 o y2>=180
             if y1 == 0 or y2 >= 180:
                 continue
             filtered_ids.append(int(cls.item()))
-        frame_ids = filtered_ids
 
-        # 6) Lógica de acumulación / cierre de caja:
-        if frame_ids:
-            # Sí hay detecciones válidas en este frame
+        # 6) Lógica de acumulación / “cerrar caja” cada 40 frames sin detección
+        if filtered_ids:
+            # Hay detecciones válidas en este frame
             if not self.collecting:
                 self.collecting = True
                 self.no_detection_count = 0
                 self.box_detections = []
-            # Agregar todas las IDs detectadas (en Glaxo solo extendían varios IDs, aquí agregamos el primero)
-            # Si prefieres todos, usa box_detections.extend(frame_ids). 
-            # Mantendré 'extend' para acercarme más a Glaxo.
-            self.box_detections.extend(frame_ids)
+            # Acumulamos todas las IDs válidas de este frame
+            self.box_detections.extend(filtered_ids)
             self.no_detection_count = 0
         else:
-            # No hubo detecciones en este frame
+            # No hay detecciones en este frame
             if self.collecting:
                 self.no_detection_count += 1
                 if self.no_detection_count >= self.END_DELAY_FRAMES:
-                    # “Cerrar caja”: calculamos la etiqueta más frecuente
+                    # “Cerrar caja”: calculamos etiqueta más frecuente
                     if self.box_detections:
                         most_common = int(np.bincount(self.box_detections).argmax())
-                    else:
-                        most_common = 9  # si por alguna razón no hay detecciones acumuladas
-                    # Publicamos la etiqueta
+                    # Publicamos la etiqueta en detected_object_id
                     self.msg2.data = most_common
                     self.publisher_detected.publish(self.msg2)
-                    # Reiniciamos estado para próxima caja
+
+                    # (Opcional) Si quieres dibujar el texto de la etiqueta más frecuente
+                    # sobre la última imagen anotada, podrías hacerlo aquí con:
+                    # cv2.putText(annotated_bgr, f"ID_acumulado: {most_common}", (10, 30),
+                    #             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+                    # Reiniciamos para la próxima “caja”
                     self.collecting = False
                     self.no_detection_count = 0
                     self.box_detections.clear()
-            else:
-                # Si ni siquiera está en modo collecting, publicamos 9 inmediatamente
-                self.msg2.data = 9
-                self.publisher_detected.publish(self.msg2)
-
-        # 7) Mostrar por pantalla la imagen recortada con detecciones (plot de YOLO)
-        #    `results.plot()` ya está sobre la copia interna, así que:
-        annotated = results.plot()  # devuelve una copia RGB o BGR?
-        # Ultralitycs normalmente regresa RGB, pero OpenCV espera BGR para imshow:
+        # 7) Obtener la imagen anotada por YOLO (bounding boxes + clases)
+        #    `results.plot()` regresa una imagen RGB con las anotaciones
+        annotated = results.plot()
+        # Convertimos a BGR para imshow y para publicar por ROS
         annotated_bgr = cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR)
+
+        # 8) Mostrar en pantalla con OpenCV
         cv2.imshow("YOLO Adaptado (center crop)", annotated_bgr)
         if cv2.waitKey(1) & 0xFF == ord('q'):
-            # Si presionan 'q', cerramos todo
+            # Si presionas 'q', cerramos nodo y ventanas
             rclpy.shutdown()
             cv2.destroyAllWindows()
+
+        # 9) Publicar la imagen procesada en el tópico 'processed_image'
+        self.msg_img = self.bridge.cv2_to_imgmsg(annotated_bgr, 'bgr8')
+        self.publisher_img.publish(self.msg_img)
 
     def destroy(self):
         cv2.destroyAllWindows()
