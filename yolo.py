@@ -1,113 +1,131 @@
-#PARA EL PROCESO DE IMAGENES
-import matplotlib.pyplot as plt
-import numpy as np
-from mpl_toolkits.mplot3d import Axes3D
-from matplotlib import cm
-from matplotlib import colors
+# yolo_adaptado.py
+import time
 import cv2
-#PARA LOS TOPICOS
-import math 
-import numpy as np 
-import rclpy 
-from rclpy import qos
+import numpy as np
+
+import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32, Int16
+from std_msgs.msg import Int16
 from sensor_msgs.msg import Image
-from skimage.io import imread, imshow
-from skimage.color import rgb2hsv
 from cv_bridge import CvBridge
 from ultralytics import YOLO
 
-
-
 class My_Subscriber(Node):
-   def __init__(self):
-       super().__init__('lab9')
-       #Mensajes que se publicaran
-       self.msg1 = Image()
-       self.counter = 100
-       self.img =  np.zeros((1000, 1000, 3), dtype=np.uint8)
-       self.img_cv2 = np.zeros((1000, 1000, 3), dtype=np.uint8)
-       self.bridge = CvBridge()
-       self.detected_objects = []
-       self.A_counter = 0
-       self.detections = []
-       self.msg2= Int16()
-       self.img_detected = 9
+    def __init__(self):
+        super().__init__('lab9_adaptado')
 
+        # Publicador para la etiqueta detectada
+        self.publisher_detected = self.create_publisher(Int16, 'detected_object_id', 10)
+        self.msg2 = Int16()
 
+        # Suscripción al tópico 'esquinas' (llega mensaje sensor_msgs/Image)
+        self.bridge = CvBridge()
+        self.img = np.zeros((480, 640, 3), dtype=np.uint8)  # placeholder inicial
+        self.create_subscription(
+            Image,
+            'esquinas',
+            self.Image_hz,
+            10
+        )
 
+        # Parámetros para la lógica de “glaxo”:
+        self.model = YOLO('src/basic_comms/basic_comms/best.pt')  # Mismo best.pt
+        self.END_DELAY_FRAMES = 40  # frames sin detección para “cerrar caja”
+        self.FRAME_PERIOD = 1.0 / 60.0  # no se usa explícito, pero lo dejamos como referencia
+        self.collecting = False
+        self.no_detection_count = 0
+        self.box_detections = []
 
-       #Subscripciones al topico de la imagen 
-       self.video_source = self.create_subscription(Image, 'esquinas', self.Image_hz, qos.qos_profile_sensor_data)
+        # Temporizador a 0.1 s (10 Hz)
+        self.timer_period = 0.1
+        self.create_timer(self.timer_period, self.timer_callback)
 
-       self.publisher_detected = self.create_publisher(Int16, 'detected_object_id', 10)
+    def Image_hz(self, msg: Image):
+        # Recibimos imagen desde ROS, la convertimos a CV BGR
+        self.img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
 
+    def timer_callback(self):
+        # 1) Resize a 640×480
+        frame = cv2.resize(self.img, (640, 480))
 
+        # 2) Recorte central: ancho 320, alto 200 (misma lógica de GlaxoPruebas)
+        h, w = frame.shape[:2]           # h=480, w=640
+        new_w, new_h = 320, 80
+        x0 = (w - new_w) // 2            # (640-320)//2 = 160
+        # y0 = new_h (80), pero recortamos de 0:200
+        cropped = frame[0:200, x0:x0 + new_w]
 
-       self.timer_period= .1
-       self.create_timer(self.timer_period,self.timer_callback) 
+        # 3) Convertimos BGR→RGB para YOLO
+        rgb_cropped = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
 
-       # ### Sharpening
+        # 4) Ejecutamos YOLO sobre el recorte
+        results = self.model(source=rgb_cropped, conf=0.3, imgsz=512, verbose=False)[0]
 
+        # 5) Filtrar detecciones que toquen top/bottom
+        #    frame_height para bottom: 180 (igual al código Glaxo)
+        filtered_ids = []
+        for coords, cls in zip(results.boxes.xyxy, results.boxes.cls):
+            x1, y1, x2, y2 = coords.cpu().numpy().astype(int)
+            # Si y1==0 (top) o y2>=180 (bottom), ignorar
+            if y1 == 0 or y2 >= 180:
+                continue
+            filtered_ids.append(int(cls.item()))
+        frame_ids = filtered_ids
 
-   def Image_hz(self, msg):
-       self.img = self.bridge.imgmsg_to_cv2(msg, "rgb8") 
-       #self.img_cv2 = self.bridge.imgmsg_to_cv2(msg, "rgb8")
-       
+        # 6) Lógica de acumulación / cierre de caja:
+        if frame_ids:
+            # Sí hay detecciones válidas en este frame
+            if not self.collecting:
+                self.collecting = True
+                self.no_detection_count = 0
+                self.box_detections = []
+            # Agregar todas las IDs detectadas (en Glaxo solo extendían varios IDs, aquí agregamos el primero)
+            # Si prefieres todos, usa box_detections.extend(frame_ids). 
+            # Mantendré 'extend' para acercarme más a Glaxo.
+            self.box_detections.extend(frame_ids)
+            self.no_detection_count = 0
+        else:
+            # No hubo detecciones en este frame
+            if self.collecting:
+                self.no_detection_count += 1
+                if self.no_detection_count >= self.END_DELAY_FRAMES:
+                    # “Cerrar caja”: calculamos la etiqueta más frecuente
+                    if self.box_detections:
+                        most_common = int(np.bincount(self.box_detections).argmax())
+                    else:
+                        most_common = 9  # si por alguna razón no hay detecciones acumuladas
+                    # Publicamos la etiqueta
+                    self.msg2.data = most_common
+                    self.publisher_detected.publish(self.msg2)
+                    # Reiniciamos estado para próxima caja
+                    self.collecting = False
+                    self.no_detection_count = 0
+                    self.box_detections.clear()
+            else:
+                # Si ni siquiera está en modo collecting, publicamos 9 inmediatamente
+                self.msg2.data = 9
+                self.publisher_detected.publish(self.msg2)
 
+        # 7) Mostrar por pantalla la imagen recortada con detecciones (plot de YOLO)
+        #    `results.plot()` ya está sobre la copia interna, así que:
+        annotated = results.plot()  # devuelve una copia RGB o BGR?
+        # Ultralitycs normalmente regresa RGB, pero OpenCV espera BGR para imshow:
+        annotated_bgr = cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR)
+        cv2.imshow("YOLO Adaptado (center crop)", annotated_bgr)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            # Si presionan 'q', cerramos todo
+            rclpy.shutdown()
+            cv2.destroyAllWindows()
 
-   def timer_callback(self):
-       image =self.img_cv2
-       self.img_cv2= cv2.cvtColor(self.img, cv2.COLOR_BGR2RGB)
-       #self.rotate = cv2.rotate(self.img_cv2, cv2.ROTATE_180)
-       model=YOLO('src/basic_comms/basic_comms/best.pt')
-       print(self.img_detected)
+    def destroy(self):
+        cv2.destroyAllWindows()
 
-
-
-     #self.publisher_video.publish(self.bridge.cv2_to_imgmsg(np.array(results)))
-      # self.publisher_MC.publish(edges(x=float(self.cX), y=float(self.cY), z=0.0))
-       results = model (source=self.img_cv2, show= False, conf=0.3, save=False)
-       self.detected_objs = []
-       for result in results:
-        for obj in result.boxes:
-            class_id = int(obj.cls.item())  # Convert tensor to int
-            conf = float(obj.conf.item())   # Convert tensor to float
-            self.detected_objs.append((class_id))
-
-
-        if len(self.detected_objs) != 0:
-           self.detections.append(self.detected_objs[0])
-           print(self.detections)
-           self.A_counter += 1
-           if self.A_counter == 10:
-             #flattened_detections = [class_id for detection in self.detected_objects for class_id, _ in detection]
-             counts = np.bincount(self.detections)
-             temp =np.argmax(counts)
-             
-             self.img_detected = int(temp)
-             self.msg2.data = self.img_detected
-             self.publisher_detected.publish(self.msg2)
-             self.A_counter = 0
-             self.detections=[]
-        elif len(self.detected_objs) == 0:
-              self.img_detected = 9
-              self.msg2.data= self.img_detected
-              self.publisher_detected.publish(self.msg2)
-
-            
-           
-
-       
-
-
-
-def main (args = None):
+def main(args=None):
     rclpy.init(args=args)
-    m_s = My_Subscriber()
-    rclpy.spin(m_s)
-    m_s.destroy_node()
+    node = My_Subscriber()
+    rclpy.spin(node)
+    node.destroy()
+    node.destroy_node()
     rclpy.shutdown()
 
 if __name__ == '__main__':
