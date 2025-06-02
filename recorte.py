@@ -9,7 +9,7 @@ from cv_bridge import CvBridge
 
 class RecortePublisherCam(Node):
     def __init__(self):
-        super().__init__('recorte_publisher_camera')
+        super().__init__('main_node')
 
         self.publisher = self.create_publisher(Image, 'imagen_recortada', 10)
         self.bridge = CvBridge()
