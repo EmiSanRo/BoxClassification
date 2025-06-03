@@ -16,7 +16,7 @@ DICT_TYPE     = aruco.DICT_4X4_50
 MARKER_SIZE_M = 0.05
 
 # Obtiene dinámicamente la ruta al recurso config.json
-pkg_share = get_package_share_directory('aruco_detector')
+pkg_share = get_package_share_directory('aruco__pkg')
 CALIB_FILE = os.path.join(pkg_share, 'config.json')
 
 def load_calibration(path: str):
@@ -39,7 +39,7 @@ class ArucoDetectorNode(Node):
         super().__init__('aruco_detector_node')
 
         # Publisher para el estado de la caja
-        self.state_pub = self.create_publisher(String, 'box_state', 10)
+        self.state_pub = self.create_publisher(Int32, 'box_state', 10)
         self.publisher = self.create_publisher(Image, 'imagen_aruco', 10)
         self.bridge = CvBridge()
 
@@ -116,18 +116,18 @@ class ArucoDetectorNode(Node):
                 if self.current_yolo is not None and dist_cm < 120.0:
                     y = self.current_yolo
                     if y in (0, 1, 3, 4, 6, 7):
-                        estado = "caja dañada"
+                        estado = 0
                         self.damaged_count += 1
                     elif (y == 2 and m_id in (0, 1, 2)) or \
                          (y == 5 and m_id in (3, 4, 5)) or \
                          (y == 8 and m_id in (6, 7, 8)):
-                        estado = "caja adecuada"
+                        estado = 1
                         self.adequate_count += 1
                     else:
-                        estado = "caja incorrecta"
+                        estado = 0
 
         if estado is not None:
-            msg = String(data=estado)
+            msg = Int32(data=estado)
             self.state_pub.publish(msg)
             self.get_logger().info(
                 f"[Estado: {estado}] Adecuadas={self.adequate_count}, Dañadas={self.damaged_count}"
@@ -140,8 +140,8 @@ class ArucoDetectorNode(Node):
         if cv2.waitKey(1) & 0xFF == ord('q'):
             rclpy.shutdown()
 
-        msg = self.bridge.cv2_to_imgmsg(frame, encoding='rgb8')
-        self.publisher.publish(msg)
+        msg2 = self.bridge.cv2_to_imgmsg(frame, encoding='rgb8')
+        self.publisher.publish(msg2)
 
 def main(args=None):
     rclpy.init(args=args)
