@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Int32, String
+from std_msgs.msg import Int32
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
 
@@ -9,150 +9,166 @@ import cv2
 from cv2 import aruco
 import numpy as np
 import os
-from ament_index_python.packages import get_package_share_directory
 import json
+from ament_index_python.packages import get_package_share_directory
 
 DICT_TYPE     = aruco.DICT_4X4_50
 MARKER_SIZE_M = 0.05
-
-# Obtiene dinámicamente la ruta al recurso config.json
-pkg_share = get_package_share_directory('aruco__pkg')
-CALIB_FILE = os.path.join(pkg_share, 'config.json')
-
-def load_calibration(path: str):
-    with open(path, 'r') as f:
-        d = json.load(f)
-    camera_mtx = np.asarray(d["camera_matrix"], dtype=np.float32)
-    dist_coeff = np.asarray(d["dist_coeff"], dtype=np.float32)
-    return camera_mtx, dist_coeff
-
-def create_detector(dict_type=DICT_TYPE) -> aruco.ArucoDetector:
-    aruco_dict = aruco.getPredefinedDictionary(dict_type)
-    params     = aruco.DetectorParameters()
-    return aruco.ArucoDetector(aruco_dict, params)
-
-def detect_markers(gray_img: np.ndarray, detector: aruco.ArucoDetector):
-    return detector.detectMarkers(gray_img)
+PKG_NAME      = 'aruco_pkg'
 
 class ArucoDetectorNode(Node):
+    # Inicializa el nodo y configura publishers, suscriptores, calibración, cámara y timer
     def __init__(self):
         super().__init__('aruco_detector_node')
-
-        # Publisher para el estado de la caja
         self.state_pub = self.create_publisher(Int32, 'box_state', 10)
-        self.publisher = self.create_publisher(Image, 'imagen_aruco', 10)
-        self.bridge = CvBridge()
-
-        # Subscriber al tópico de YOLO
+        self.img_pub   = self.create_publisher(Image, 'imagen_aruco', 10)
+        self.bridge    = CvBridge()
         self.current_yolo = None
-        self.create_subscription(Int32, 'yolo_cajas', self.yolo_callback, 10)
-
-        # Contadores
+        self.create_subscription(
+            Int32,
+            'yolo_cajas',
+            self.yolo_callback,
+            10
+        )
         self.adequate_count = 0
         self.damaged_count  = 0
-
-        # Intentar cargar calibración
         try:
-            self.camera_mtx, self.dist_coeff = load_calibration(CALIB_FILE)
+            share_dir = get_package_share_directory(PKG_NAME)
+            file_path = os.path.join(share_dir, 'config.json')
+            self.camera_mtx, self.dist_coeff = self.load_calibration(file_path)
+            self.get_logger().info(f"Calibración cargada desde: {file_path}")
         except Exception as e:
-            self.get_logger().error(f"No se pudo cargar la calibración: {e}")
+            self.get_logger().error(f"No se pudo cargar calibración: {e}")
             rclpy.shutdown()
             return
-        
-        self.cap = cv2.VideoCapture(1)
+        self.detector = self.create_aruco_detector(DICT_TYPE)
+        cam_index = 0
+        self.cap = cv2.VideoCapture(cam_index)
         if not self.cap.isOpened():
-            self.get_logger().error("No se pudo abrir la cámara.")
+            self.get_logger().error(f"No se pudo abrir la cámara en índice {cam_index}.")
             rclpy.shutdown()
             return
+        self.get_logger().info("Cámara inicializada con VideoCapture.")
+        timer_period = 0.05
+        self.create_timer(timer_period, self.timer_callback)
+        self.get_logger().info("Nodo listo: detectando ArUco a ~20 Hz y escuchando 'yolo_cajas'.")
 
-        self.detector = create_detector()
-        self.get_logger().info("Nodo listo: escuchando /camera1/video_raw y /yolo_cajas")
+    # Carga los parámetros de calibración de la cámara desde un archivo JSON
+    def load_calibration(self, path: str):
+        with open(path, 'r') as f:
+            data = json.load(f)
+        cam_mtx = np.asarray(data["camera_matrix"], dtype=np.float32)
+        dist = np.asarray(data["dist_coeff"][0], dtype=np.float32)
+        return cam_mtx, dist
 
+    # Crea y retorna un detector de marcas ArUco basado en el diccionario especificado
+    def create_aruco_detector(self, dict_type: int):
+        aruco_dict = aruco.getPredefinedDictionary(dict_type)
+        params     = aruco.DetectorParameters()
+        detector   = aruco.ArucoDetector(aruco_dict, params)
+        return detector
+
+    # Callback que actualiza el valor recibido del tópico 'yolo_cajas'
     def yolo_callback(self, msg: Int32):
         self.current_yolo = msg.data
         self.get_logger().debug(f"yolo_cajas recibió: {self.current_yolo}")
 
-    def image_callback(self, img_msg: Image):
-        # Convertir ROS Image a OpenCV
+    # Procesa frames periódicamente: detecta marcadores, calcula estado y publica resultados
+    def timer_callback(self):
         ret, frame = self.cap.read()
         if not ret:
+            estado = Int32(data=0)
+            self.state_pub.publish(estado)
+            self.get_logger().warn("No se pudo leer frame de cámara. Publicando estado=0.")
             return
-
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        corners, ids, _ = detect_markers(gray, self.detector)
-
-        estado = None
-
-        if ids is not None:
-            half_s = MARKER_SIZE_M / 2
-            obj_pts = np.array([
-                [-half_s,  half_s, 0],
-                [ half_s,  half_s, 0],
-                [ half_s, -half_s, 0],
-                [-half_s, -half_s, 0],
-            ], dtype=np.float32)
-
+        corners, ids, _ = self.detector.detectMarkers(gray)
+        estado_valor = 0
+        if ids is not None and len(ids) > 0:
             m_id = int(ids.flatten()[0])
-            c = corners[0].reshape(4, 2).astype(np.int32)
-
+            c   = corners[0].reshape(4, 2).astype(np.int32)
             cv2.polylines(frame, [c], True, (0, 255, 0), 2)
             center = tuple(np.mean(c, axis=0).astype(int))
             cv2.circle(frame, center, 4, (0, 0, 255), -1)
             cv2.putText(frame, f"ID: {m_id}",
                         (center[0] - 20, center[1] - 15),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-
+            half_s = MARKER_SIZE_M / 2.0
+            obj_pts = np.array([
+                [-half_s,  half_s, 0],
+                [ half_s,  half_s, 0],
+                [ half_s, -half_s, 0],
+                [-half_s, -half_s, 0],
+            ], dtype=np.float32)
             ok, rvec, tvec = cv2.solvePnP(
-                obj_pts, c.astype(np.float32),
-                self.camera_mtx, self.dist_coeff,
+                obj_pts,
+                c.astype(np.float32),
+                self.camera_mtx,
+                self.dist_coeff,
                 flags=cv2.SOLVEPNP_IPPE_SQUARE
             )
             if ok:
-                dist_cm = float(np.linalg.norm(tvec) * 100.0)
+                dist_m   = np.linalg.norm(tvec)
+                dist_cm  = dist_m * 100.0
                 cv2.putText(frame, f"{dist_cm:.1f} cm",
                             (center[0] - 40, center[1] + 15),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-
-                if self.current_yolo is not None and dist_cm < 120.0:
+                if (self.current_yolo is not None) and (dist_cm < 120.0):
                     y = self.current_yolo
                     if y in (0, 1, 3, 4, 6, 7):
-                        estado = 0
+                        estado_valor = 1
                         self.damaged_count += 1
+                        descripcion = "caja dañada"
                     elif (y == 2 and m_id in (0, 1, 2)) or \
                          (y == 5 and m_id in (3, 4, 5)) or \
                          (y == 8 and m_id in (6, 7, 8)):
-                        estado = 1
+                        estado_valor = 0
                         self.adequate_count += 1
+                        descripcion = "caja adecuada"
                     else:
-                        estado = 0
-
-        if estado is not None:
-            msg = Int32(data=estado)
-            self.state_pub.publish(msg)
-            self.get_logger().info(
-                f"[Estado: {estado}] Adecuadas={self.adequate_count}, Dañadas={self.damaged_count}"
-            )
-            cv2.putText(frame, f"Estado: {estado}",
-                        (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-
+                        estado_valor = 1
+                        descripcion = "caja incorrecta"
+                    cv2.putText(frame, f"Estado: {descripcion}",
+                                (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                    self.get_logger().info(
+                        f"[{descripcion.upper()}] YOLO={y}, ArUco={m_id}  "
+                        f"Adecuadas={self.adequate_count}, Dañadas={self.damaged_count}"
+                    )
+                else:
+                    estado_valor = 0
+            else:
+                estado_valor = 0
+        else:
+            estado_valor = 0
+        msg_estado = Int32(data=int(estado_valor))
+        self.state_pub.publish(msg_estado)
+        try:
+            img_msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
+            self.img_pub.publish(img_msg)
+        except CvBridgeError as e:
+            self.get_logger().error(f"Error en CvBridge: {e}")
         cv2.imshow("ArUco Multi-detector Orin", frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
             rclpy.shutdown()
 
-        msg2 = self.bridge.cv2_to_imgmsg(frame, encoding='rgb8')
-        self.publisher.publish(msg2)
+    # Libera recursos de OpenCV y destruye el nodo ROS
+    def destroy_node(self):
+        if hasattr(self, 'cap') and self.cap.isOpened():
+            self.cap.release()
+        cv2.destroyAllWindows()
+        super().destroy_node()
 
+# Función principal que inicializa ROS, crea el nodo y gestiona su spin y cierre
 def main(args=None):
     rclpy.init(args=args)
     node = ArucoDetectorNode()
-
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        cv2.destroyAllWindows()
         node.destroy_node()
         rclpy.shutdown()
 
