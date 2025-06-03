@@ -2,21 +2,29 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int32, String
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge, CvBridgeError
 
 import cv2
 from cv2 import aruco
 import numpy as np
+import os
+from ament_index_python.packages import get_package_share_directory
 import json
 
-# Parámetros de tu calibración y ArUco
-DICT_TYPE          = aruco.DICT_4X4_50
-MARKER_SIZE_M      = 0.05
-CALIB_FILE         = "aruco_detector/aruco_detector/config.json"
+DICT_TYPE     = aruco.DICT_4X4_50
+MARKER_SIZE_M = 0.05
+
+# Obtiene dinámicamente la ruta al recurso config.json
+pkg_share = get_package_share_directory('aruco_detector')
+CALIB_FILE = os.path.join(pkg_share, 'config.json')
 
 def load_calibration(path: str):
     with open(path, 'r') as f:
         d = json.load(f)
-    return np.asarray(d["camera_matrix"]), np.asarray(d["dist_coeff"])
+    camera_mtx = np.asarray(d["camera_matrix"], dtype=np.float32)
+    dist_coeff = np.asarray(d["dist_coeff"], dtype=np.float32)
+    return camera_mtx, dist_coeff
 
 def create_detector(dict_type=DICT_TYPE) -> aruco.ArucoDetector:
     aruco_dict = aruco.getPredefinedDictionary(dict_type)
@@ -26,15 +34,16 @@ def create_detector(dict_type=DICT_TYPE) -> aruco.ArucoDetector:
 def detect_markers(gray_img: np.ndarray, detector: aruco.ArucoDetector):
     return detector.detectMarkers(gray_img)
 
-
 class ArucoDetectorNode(Node):
     def __init__(self):
         super().__init__('aruco_detector_node')
 
-        # Publisher único para el estado de la caja
+        # Publisher para el estado de la caja
         self.state_pub = self.create_publisher(String, 'box_state', 10)
+        self.publisher = self.create_publisher(Image, 'imagen_aruco', 10)
+        self.bridge = CvBridge()
 
-        # Subscriber al tópico yolo_cajas
+        # Subscriber al tópico de YOLO
         self.current_yolo = None
         self.create_subscription(Int32, 'yolo_cajas', self.yolo_callback, 10)
 
@@ -42,23 +51,29 @@ class ArucoDetectorNode(Node):
         self.adequate_count = 0
         self.damaged_count  = 0
 
-        # Carga calibración y detector
-        self.camera_mtx, self.dist_coeff = load_calibration(CALIB_FILE)
-        self.detector = create_detector()
-
-        # Inicializa cámara
-        self.cap = cv2.VideoCapture(2)
+        # Intentar cargar calibración
+        try:
+            self.camera_mtx, self.dist_coeff = load_calibration(CALIB_FILE)
+        except Exception as e:
+            self.get_logger().error(f"No se pudo cargar la calibración: {e}")
+            rclpy.shutdown()
+            return
+        
+        self.cap = cv2.VideoCapture(1)
         if not self.cap.isOpened():
             self.get_logger().error("No se pudo abrir la cámara.")
             rclpy.shutdown()
             return
 
-        self.get_logger().info("Nodo listo: detectando ArUcos y escuchando yolo_cajas...")
+        self.detector = create_detector()
+        self.get_logger().info("Nodo listo: escuchando /camera1/video_raw y /yolo_cajas")
 
     def yolo_callback(self, msg: Int32):
         self.current_yolo = msg.data
+        self.get_logger().debug(f"yolo_cajas recibió: {self.current_yolo}")
 
-    def detect_and_publish(self):
+    def image_callback(self, img_msg: Image):
+        # Convertir ROS Image a OpenCV
         ret, frame = self.cap.read()
         if not ret:
             return
@@ -69,7 +84,6 @@ class ArucoDetectorNode(Node):
         estado = None
 
         if ids is not None:
-            # Prepara puntos 3D del marcador
             half_s = MARKER_SIZE_M / 2
             obj_pts = np.array([
                 [-half_s,  half_s, 0],
@@ -78,11 +92,9 @@ class ArucoDetectorNode(Node):
                 [-half_s, -half_s, 0],
             ], dtype=np.float32)
 
-            # Solo procesamos el primer marcador detectado
             m_id = int(ids.flatten()[0])
             c = corners[0].reshape(4, 2).astype(np.int32)
 
-            # Dibujar contorno e ID
             cv2.polylines(frame, [c], True, (0, 255, 0), 2)
             center = tuple(np.mean(c, axis=0).astype(int))
             cv2.circle(frame, center, 4, (0, 0, 255), -1)
@@ -90,7 +102,6 @@ class ArucoDetectorNode(Node):
                         (center[0] - 20, center[1] - 15),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
-            # Estimar distancia
             ok, rvec, tvec = cv2.solvePnP(
                 obj_pts, c.astype(np.float32),
                 self.camera_mtx, self.dist_coeff,
@@ -102,57 +113,48 @@ class ArucoDetectorNode(Node):
                             (center[0] - 40, center[1] + 15),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
-                # Lógica de estado solo si tenemos un valor de YOLO y estamos cerca
                 if self.current_yolo is not None and dist_cm < 120.0:
                     y = self.current_yolo
-                    # Detectar daño
-                    if y in (1,2,4,5,7,8):
+                    if y in (0, 1, 3, 4, 6, 7):
                         estado = "caja dañada"
                         self.damaged_count += 1
+                    elif (y == 2 and m_id in (0, 1, 2)) or \
+                         (y == 5 and m_id in (3, 4, 5)) or \
+                         (y == 8 and m_id in (6, 7, 8)):
+                        estado = "caja adecuada"
+                        self.adequate_count += 1
                     else:
-                        # 0-2 → tipo 0, 3-5 → tipo 1, 6-8 → tipo 2
-                        tipo = y // 3
-                        if tipo == m_id:
-                            estado = "caja adecuada"
-                            self.adequate_count += 1
-                        else:
-                            estado = "caja incorrecta"
+                        estado = "caja incorrecta"
 
-        # Publicar e imprimir un solo mensaje de estado
         if estado is not None:
             msg = String(data=estado)
             self.state_pub.publish(msg)
             self.get_logger().info(
                 f"[Estado: {estado}] Adecuadas={self.adequate_count}, Dañadas={self.damaged_count}"
             )
-            # Mostrar estado en la ventana
             cv2.putText(frame, f"Estado: {estado}",
                         (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
-        # Mostrar siempre la ventana con detección y distancia
-        cv2.imshow("ArUco Multi-detector", frame)
+        cv2.imshow("ArUco Multi-detector Orin", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             rclpy.shutdown()
+
+        msg = self.bridge.cv2_to_imgmsg(frame, encoding='rgb8')
+        self.publisher.publish(msg)
 
 def main(args=None):
     rclpy.init(args=args)
     node = ArucoDetectorNode()
+
     try:
-        while rclpy.ok():
-            node.detect_and_publish()
-            rclpy.spin_once(node, timeout_sec=0)
+        rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        if node.cap and node.cap.isOpened():
-            node.cap.release()
         cv2.destroyAllWindows()
         node.destroy_node()
         rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
-
-#Con el Aruco mas pequeño hay un error de aproximadamente un metro 
-# y lo detecta correctamente a hasta 1.5m aprox
