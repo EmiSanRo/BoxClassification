@@ -7,10 +7,17 @@
   <maintainer email="emy@todo.todo">emy</maintainer>
   <license>Apache-2.0</license>
 
+  <buildtool_depend>ament_python</buildtool_depend>
+
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
+  
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>opencv_python</exec_depend>
+  
   <depend>launch_ros</depend>
 
   <test_depend>ament_copyright</test_depend>
