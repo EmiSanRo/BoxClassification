@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Int32
+from std_msgs.msg import Int32, Int16, String
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
 
@@ -20,13 +20,14 @@ class ArucoDetectorNode(Node):
     # Inicializa el nodo y configura publishers, suscriptores, calibración, cámara y timer
     def __init__(self):
         super().__init__('aruco_detector_node')
-        self.state_pub = self.create_publisher(Int32, 'box_state', 10)
+        self.state_pub = self.create_publisher(Int32, 'inst_actuador', 10)
+        self.state_dash = self.create_publisher(String, 'box_state', 10)
         self.img_pub   = self.create_publisher(Image, 'imagen_aruco', 10)
         self.bridge    = CvBridge()
         self.current_yolo = None
         self.create_subscription(
-            Int32,
-            'yolo_cajas',
+            Int16,
+            'detected_object_id',
             self.yolo_callback,
             10
         )
@@ -119,15 +120,18 @@ class ArucoDetectorNode(Node):
                         estado_valor = 1
                         self.damaged_count += 1
                         descripcion = "caja dañada"
+                        mensaje_dash = f"{y},{self.current_yolo},caja incidencia,"
                     elif (y == 2 and m_id in (0, 1, 2)) or \
                          (y == 5 and m_id in (3, 4, 5)) or \
                          (y == 8 and m_id in (6, 7, 8)):
                         estado_valor = 0
                         self.adequate_count += 1
                         descripcion = "caja adecuada"
+                        mensaje_dash = f"{y},{self.current_yolo},caja adecuada,"
                     else:
                         estado_valor = 1
                         descripcion = "caja incorrecta"
+                        mensaje_dash = f"{y},{self.current_yolo},caja incidencia,"
                     cv2.putText(frame, f"Estado: {descripcion}",
                                 (10, 30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
@@ -142,7 +146,9 @@ class ArucoDetectorNode(Node):
         else:
             estado_valor = 0
         msg_estado = Int32(data=int(estado_valor))
+        msg_dash = String(date=str(mensaje_dash))
         self.state_pub.publish(msg_estado)
+        self.state_dash.publish(msg_dash)
         try:
             img_msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
             self.img_pub.publish(img_msg)
