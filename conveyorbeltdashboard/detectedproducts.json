@@ -1,0 +1,22 @@
+[
+  {
+    "aruco_id": 2,
+    "box_type": "3",
+    "status": "caja incidencia"
+  },
+  {
+    "aruco_id": 2,
+    "box_type": "2",
+    "status": "caja buena"
+  },
+  {
+    "aruco_id": 2,
+    "box_type": "4",
+    "status": "caja incidencia"
+  },
+  {
+    "aruco_id": 2,
+    "box_type": "4",
+    "status": "caja incidencia"
+  }
+]

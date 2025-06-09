@@ -1,0 +1,17 @@
+body{
+    background-color: #77cbb9;
+    margin: 0;
+    padding: 0;
+}
+.main-container{
+    padding: 15px;
+
+    background-color: silver;
+    display: flex;
+}
+
+.right-side-container .left-side-container{
+    width: 33%;
+    height: 100%;
+}
+

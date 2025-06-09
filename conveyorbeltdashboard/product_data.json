@@ -1,0 +1,22 @@
+[
+  {
+    "aruco_id": 1,
+    "box_type": "A",
+    "Product": "Tarjeta ESP32"
+  },
+  {
+    "aruco_id": 2,
+    "box_type": "B",
+    "Product": "Motor sin escobillas"
+  },
+  {
+    "aruco_id": 3,
+    "box_type": "C",
+    "Product": "Sensor de temperatura"
+  },
+  {
+    "aruco_id": 4,
+    "box_type": "5",
+    "Product": "liquor"
+  }
+]

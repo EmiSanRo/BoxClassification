@@ -1,0 +1,10 @@
+[YOLO Node] --->|
+                |-- sensor_msgs/Image --> [Image Transform Node] -- sensor_msgs/CompressedImage --> [Frontend]
+[Aruco Node]--->| 
+
+[Frontend] --HTTP GET /products--> [Node.js Backend] --JSON de productos--> [Frontend]
+[Frontend] --HTTP GET /detectedproducts--> [Node.js Backend] --JSON de detectados--> [Frontend]
+[Frontend] --HTTP POST /products--> [Node.js Backend]
+[Frontend] --HTTP POST /motor_actuator--> [Node.js Backend] --std_msgs/Int32--> [Actuator Node]
+
+[Aruco Node] --std_msgs/String--> [Node.js Backend: DetectedSubscriber]
